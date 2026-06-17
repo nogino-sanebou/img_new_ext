@@ -47,45 +47,67 @@ fn encode(target: Vec<u8>) -> anyhow::Result<Vec<u8>> {
         target = data;
     }
 
-    let mut count = 1;
+    let mut raw_stock = Vec::new();
+    let mut rle_count = 1;
     while let Some((fst, data)) = target.split_first() {
         if data.len() == 0 {
             if t == *fst {
-                count += 1;
+                rle_count += 1;
+                out.push(1);
+                out.push(t);
+                out.push(rle_count);
+            } else {
+                out.push(0);
+                out.push(raw_stock.len() as u8);
+                raw_stock.push(*fst);
+                out.extend(&raw_stock);
             }
-
-            out.push(t);
-            out.push(count);
             break;
         }
 
         if t == *fst {
-            count += 1;
+            if raw_stock.len() >= 1 {
+                out.push(0);
+                out.push(raw_stock.len() as u8);
+                out.extend(&raw_stock);
+                raw_stock.clear();
+            }
 
-            if count == 255 {
+            rle_count += 1;
+
+            if rle_count == 255 {
+                out.push(1);
                 out.push(t);
                 out.push(255);
-                count = 0;
+                rle_count = 0;
             }
 
             target = data;
             continue;
         }
 
-        if count > 1 {
+        if rle_count > 1 {
+            out.push(1);
             out.push(t);
-            out.push(count);
+            out.push(rle_count);
 
             t = *fst;
-            count = 1;
+            rle_count = 1;
 
             target = data;
             continue;
         }
 
-        out.push(t);
-        out.push(1);
+        raw_stock.push(t);
+        if raw_stock.len() == 255 {
+            out.push(0);
+            out.push(255);
+            out.extend(&raw_stock);
+            raw_stock.clear();
+        }
+
         t = *fst;
+        rle_count = 1;
         target = data;
     }
 
@@ -129,10 +151,32 @@ fn decode(target: Vec<u8>) -> anyhow::Result<Vec<u8>> {
             break;
         }
 
-        let data = vec![target[pos]; target[pos + 1] as usize];
-        out.extend(data);
+        if pos + 3 > target.len() {
+            return Err(Error::msg("入力ファイルのデータ構成が不正です。"));
+        }
 
-        pos += 2;
+        match target[pos] {
+            0 => {
+                let len = target[pos + 1] as usize;
+
+                if pos + 2 + len > target.len() {
+                    return Err(Error::msg("入力ファイルのデータ構成が不正です。"));
+                }
+
+                let data = &target[(pos + 2)..pos + 2 + len];
+                out.extend(data);
+                pos += 2 + len;
+            },
+            1 => {
+                let len = target[pos + 2] as usize;
+                let data = vec![target[pos + 1]; len];
+                out.extend(data);
+                pos += 3;
+            },
+            _ => {
+                return Err(Error::msg("ラベルの値が不正です"));
+            }
+        }
     }
 
     Ok(out)
